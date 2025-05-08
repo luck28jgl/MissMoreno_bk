@@ -31,7 +31,7 @@ SECRET_KEY = 'django-insecure-&uh-9mwe43%ry$&hm!t39%uw(!(yx8!#nad7osrzgw#(^&zvyb
 DEBUG = True
 
 ALLOWED_HOSTS = [
-    'https://missmoreno-bk.onrender.com'
+    'missmoreno-bk.onrender.com'
     '127.0.0.1',
     'localhost',
 ]
