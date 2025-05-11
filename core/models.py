@@ -19,6 +19,7 @@ class usuario(models.Model):
     tareastes = models.ForeignKey('tareas', on_delete=models.CASCADE, null=True)
     bocabularioasing = models.ForeignKey('bocabulario', on_delete=models.CASCADE, null=True)
     grupo = models.ForeignKey('Grupo', on_delete=models.SET_NULL, null=True, blank=True)
+    grado = models.IntegerField(default=0)
 
 class Grupo(models.Model):
     nombre = models.CharField(max_length=100)
