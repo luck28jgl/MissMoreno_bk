@@ -4,13 +4,13 @@
 #     https://www.atlassian.com/git/tutorials/saving-changes/gitignore
 
 # Node artifact files
-*/local.py
+# */local.py
 */prod.py
 node_modules/
 dist/
 */__pycache__
 */*/__pycache__
-*/migrations
+# */migrations
 media/*
 # Compiled Java class files
 *.class

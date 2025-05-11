@@ -38,7 +38,7 @@ class ApigetUserType(APIView):
 			return Response({'status':False, 'message':'Your account has been deactivated. Please contact an administrator.', 'title': 'Account deactivated'}, status=status.HTTP_400_BAD_REQUEST)
 
 		print(f"User {usr.username} logged in successfully.")
-		return Response({'status':True, 'tipo': usr.usuario.tipo_usuario, 'id': usr.usuario.id})
+		return Response({'status':True, 'tipo': usr.usuario.tipo_usuario, 'id': usr.usuario.id, 'username': usr.usuario.usr.email})
 
 class LogoutView(APIView):
 
@@ -120,7 +120,14 @@ class CustomTokenCreateView(APIView):
 			# 	return Response({'error': 'Usuario no autorizado'}, status=status.HTTP_400_BAD_REQUEST)
 			token, created = Token.objects.get_or_create(user=user)
 			login(request, user)
+			return Response({
+                'auth_token': token.key,
+                'status': True,
+                'username': user.username,
+                'type': usru.tipo_usuario,
+                'id': usru.id
+            })
 			# makeLogs(request,'Login', 'has logged in')
-			return Response({'auth_token': token.key, 'status': True})
+			# return Response({'auth_token': token.key, 'status': True})
 		else:
 			return Response({'error': 'Invalid credentials'}, status=status.HTTP_400_BAD_REQUEST)
