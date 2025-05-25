@@ -18,6 +18,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth import logout, login
 from rest_framework.authtoken.models import Token
 from core.customPagination import CustomPagination
+from django.core.files.storage import default_storage
 
 # Create your views here.
 
@@ -105,6 +106,34 @@ class bocabularioViewSet(viewsets.ModelViewSet):
 
 		serializer = self.get_serializer(queryset, many=True)
 		return Response(serializer.data)
+
+	def create(self, request):
+		data = request.data
+		archivo = request.FILES.get('archivo')  # Obtener el archivo enviado
+		if not archivo.name.endswith(('.jpg', '.png', '.pdf')):
+			return Response({'status': False, 'message': 'Tipo de archivo no permitido.'}, status=400)
+		if archivo:
+			# Guardar el archivo en la carpeta 'media/missAna' usando default_storage
+			file_path = f'media/missAna/{archivo.name}'
+			saved_file = default_storage.save(file_path, archivo)
+
+			# Generar la ruta relativa del archivo
+			relative_url = f"/{saved_file}"  # Asegurar que comience con "/"
+			
+			# Crear el objeto del modelo bocabulario
+			enf = bocabulario.objects.create(
+				Nombre=data['nombre'],
+				descripcion=data.get('descripcion', ''),
+				texturl=relative_url,  # Guardar la ruta relativa en el campo img
+				texestanol=data['texestanol'],
+				texingles=data['texingles'],
+				publico= data.get('publico', False),
+				tipo= data['tipo'],
+			)
+			enf.save()
+			return Response({'status': True, 'message': 'Bocabulario registrado correctamente.', 'img_url': relative_url})
+		else:
+			return Response({'status': False, 'message': 'No se proporcionó un archivo.'}, status=status.HTTP_400_BAD_REQUEST)
 
 class CustomTokenCreateView(APIView):
 	permission_classes = [AllowAny]
