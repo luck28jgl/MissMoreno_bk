@@ -119,15 +119,16 @@ class bocabularioViewSet(viewsets.ModelViewSet):
 
 			# Generar la ruta relativa del archivo
 			relative_url = f"/{saved_file}"  # Asegurar que comience con "/"
-			
+			publico = data.get('publico', 'false').lower() == 'true'
+
 			# Crear el objeto del modelo bocabulario
 			enf = bocabulario.objects.create(
-				Nombre=data['nombre'],
+				nombre=data['nombre'],
 				descripcion=data.get('descripcion', ''),
 				texturl=relative_url,  # Guardar la ruta relativa en el campo img
 				texestanol=data['texestanol'],
 				texingles=data['texingles'],
-				publico= data.get('publico', False),
+				publico=publico,
 				tipo= data['tipo'],
 			)
 			enf.save()

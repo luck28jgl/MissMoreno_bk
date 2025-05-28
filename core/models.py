@@ -35,6 +35,12 @@ class bocabulario(models.Model):
     publico = models.BooleanField(default=False)
     tipo = models.IntegerField(default=0)
 
+class abcedario(models.Model):
+    texturl = models.CharField(max_length=200, default='')
+    texestanol = models.CharField(max_length=200, default='')
+    texingles = models.CharField(max_length=200, default='')
+    publico = models.BooleanField(default=False)
+
 class tareas(models.Model):
     nombre = models.CharField(max_length=300, default='')
     descripcion = models.CharField(max_length=300, default='')
