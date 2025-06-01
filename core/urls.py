@@ -10,6 +10,7 @@ from core.views import *
 router = routers.DefaultRouter()
 router.register(r'usuarios', UsuariosViewSet)
 router.register(r'bocabulario', bocabularioViewSet)
+router.register(r'abcedario', abcedarioViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),

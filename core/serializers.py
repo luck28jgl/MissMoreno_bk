@@ -15,6 +15,12 @@ class bocabularioSerializer(serializers.ModelSerializer):
         model = bocabulario
         fields = '__all__'
 
+class abcedarioSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = abcedario
+        fields = '__all__'
+
 class usuariosSerializer(serializers.ModelSerializer):
     usr = AdminSerializer()  # Anidar el serializador para obtener más detalles del usuario
 

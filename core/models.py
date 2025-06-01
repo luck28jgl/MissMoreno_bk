@@ -20,6 +20,9 @@ class usuario(models.Model):
     bocabularioasing = models.ForeignKey('bocabulario', on_delete=models.CASCADE, null=True)
     grupo = models.ForeignKey('Grupo', on_delete=models.SET_NULL, null=True, blank=True)
     grado = models.IntegerField(default=0)
+    materia_a_impartir = models.TextField(default='', null=True, blank=True)
+    grado_a_impartir = models.IntegerField(default=0, null=True, blank=True)
+    grupo_aimpartir = models.IntegerField(default=0, null=True, blank=True)
 
 class Grupo(models.Model):
     nombre = models.CharField(max_length=100)

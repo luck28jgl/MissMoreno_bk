@@ -54,6 +54,7 @@ class UsuariosViewSet(viewsets.ModelViewSet):
 	queryset = usuario.objects.all().order_by('-id')
 	serializer_class = usuariosSerializer
 	permission_classes = [AllowAny]  # Permite acceso sin autenticación
+	pagination_class = CustomPagination
 
 	@action(detail=False, methods=['post'], url_path='create-account')
 	def Create_contribuyent(self, request):
@@ -84,11 +85,59 @@ class UsuariosViewSet(viewsets.ModelViewSet):
 
 		return Response({'status': True, 'message': 'Usuario registrado correctamente.'})
 
+	def list(self, request):
+		nombre = request.query_params.get('nombre', '').strip().lower()  # Re-enable filtering by name
+		queryset = self.get_queryset()
+		if nombre:
+			queryset = queryset.filter(name__icontains=nombre)
+		queryset = queryset.order_by('id')
+		queryset = self.filter_queryset(queryset)
+
+		page = self.paginate_queryset(queryset)
+		if page is not None:
+			serializer = self.get_serializer(page, many=True)
+			return self.get_paginated_response(serializer.data)
+
+		serializer = self.get_serializer(queryset, many=True)
+		return Response(serializer.data)
+
+class abcedarioViewSet(viewsets.ModelViewSet):
+	queryset = abcedario.objects.all().order_by('id')
+	serializer_class = abcedarioSerializer
+	permission_classes = [AllowAny]  # Permite acceso sin autenticación
+	pagination_class = CustomPagination
+
+	def list(self, request):
+		nombre = request.query_params.get('nombre', '').strip().lower()
+
+		queryset = self.get_queryset()
+		if nombre:
+			queryset = queryset.filter(name__icontains=nombre)
+		queryset = queryset.order_by('id')
+		queryset = self.filter_queryset(queryset)
+
+		page = self.paginate_queryset(queryset)
+		if page is not None:
+			serializer = self.get_serializer(page, many=True)
+			return self.get_paginated_response(serializer.data)
+
+		serializer = self.get_serializer(queryset, many=True)
+		return Response(serializer.data)
+
 class bocabularioViewSet(viewsets.ModelViewSet):
 	queryset = bocabulario.objects.all().order_by('-id')
 	serializer_class = bocabularioSerializer
 	permission_classes = [AllowAny]  # Permite acceso sin autenticación
 	pagination_class = CustomPagination
+
+	def destroy(self, request, pk=None):
+		try:
+			enf = bocabulario.objects.get(id=pk)
+
+			enf.delete()
+			return Response({'status': True, 'message': 'Bocabulario eliminado correctamente.'})
+		except bocabulario.DoesNotExist:
+			return Response({'status': False, 'message': 'Bocabulario no encontrado.'}, status=404)
 
 	def list(self, request):
 		nombre = request.query_params.get('nombre', '').strip().lower()
@@ -135,6 +184,34 @@ class bocabularioViewSet(viewsets.ModelViewSet):
 			return Response({'status': True, 'message': 'Bocabulario registrado correctamente.', 'img_url': relative_url})
 		else:
 			return Response({'status': False, 'message': 'No se proporcionó un archivo.'}, status=status.HTTP_400_BAD_REQUEST)
+
+	def update(self, request, pk=None):
+		try:
+			enf = bocabulario.objects.get(id=pk)
+			data = request.data
+			editimg = data.get('editimg', 'false').lower() == 'true'
+
+			if editimg:
+				archivo = request.FILES.get('archivo')
+				if archivo and archivo.name.endswith(('.jpg', '.png', '.pdf')):
+					file_path = f'media/missAna/{archivo.name}'
+					saved_file = default_storage.save(file_path, archivo)
+					relative_url = f"/{saved_file}"
+					enf.texturl = relative_url
+				elif archivo:
+					return Response({'status': False, 'message': 'Tipo de archivo no permitido.'}, status=400)
+
+			enf.nombre = data.get('nombre', enf.nombre)
+			enf.descripcion = data.get('descripcion', enf.descripcion)
+			enf.texestanol = data.get('texestanol', enf.texestanol)
+			enf.texingles = data.get('texingles', enf.texingles)
+			enf.publico = data.get('publico', str(enf.publico)).lower() == 'true'
+			enf.tipo = data.get('tipo', enf.tipo)
+			enf.save()
+
+			return Response({'status': True, 'message': 'Bocabulario actualizado correctamente.', 'img_url': enf.texturl})
+		except bocabulario.DoesNotExist:
+			return Response({'status': False, 'message': 'Bocabulario no encontrado.'}, status=404)
 
 class CustomTokenCreateView(APIView):
 	permission_classes = [AllowAny]
