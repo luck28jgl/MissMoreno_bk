@@ -31,10 +31,7 @@ class ApigetUserType(APIView):
 		usr = User.objects.get(username=data['username'])
 		if not usr:
 			return Response({'status':False, 'message':'User not found.'}, status=status.HTTP_404_NOT_FOUND)
-		userio = usuario.objects.filter(usr=usr).first()
-		if userio:
-			if userio.tipo_usuario in [1]:
-				return Response({'status':False, 'message':'The user you are trying to log in with is invalid.', 'title': 'Verify your information'}, status=status.HTTP_400_BAD_REQUEST)
+		# userio = usuario.objects.filter(usr=usr).first()
 		if usr.is_active == False:
 			return Response({'status':False, 'message':'Your account has been deactivated. Please contact an administrator.', 'title': 'Account deactivated'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -75,7 +72,7 @@ class UsuariosViewSet(viewsets.ModelViewSet):
 		enf.save()
 		userio = usuario.objects.create(
 			usr=enf,
-			tipo_usuario=2,
+			tipo_usuario=1,
 			grado=dat_usr['grado'],
 			tareastes=None,
 			bocabularioasing=None,
