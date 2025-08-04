@@ -242,6 +242,56 @@ class TareasViewSet(viewsets.ModelViewSet):
 		
 		serializer.save(creado_por=usuario_obj)
 
+	def create(self, request):
+		"""Create task with optional file attachment"""
+		user = request.user
+		usuario_obj = usuario.objects.get(usr=user)
+		
+		# Only teachers can create tasks
+		if usuario_obj.tipo_usuario != usuario.TiposUsuario.MAESTRO:
+			return Response({'error': 'Solo los maestros pueden crear tareas'}, status=403)
+		
+		data = request.data
+		archivo = request.FILES.get('archivo')
+		
+		archivo_url = None
+		if archivo:
+			if not archivo.name.endswith(('.jpg', '.png', '.pdf', '.doc', '.docx', '.txt')):
+				return Response({'status': False, 'message': 'Tipo de archivo no permitido.'}, status=400)
+			
+			# Add timestamp to filename to avoid conflicts
+			import time
+			timestamp = str(int(time.time()))
+			filename = f"{timestamp}_{archivo.name}"
+			file_path = f'media/tareas/{filename}'
+			saved_file = default_storage.save(file_path, archivo)
+			archivo_url = f"/{saved_file}"
+		
+		try:
+			# Parse date fields
+			fecha_vencimiento = None
+			if data.get('fecha_vencimiento'):
+				from datetime import datetime
+				fecha_vencimiento = datetime.fromisoformat(data['fecha_vencimiento'].replace('Z', '+00:00'))
+			
+			tarea = tareas.objects.create(
+				nombre=data['nombre'],
+				descripcion=data.get('descripcion', ''),
+				instrucciones=data.get('instrucciones', ''),
+				es_general=data.get('es_general', 'false').lower() == 'true',
+				creado_por=usuario_obj,
+				fecha_vencimiento=fecha_vencimiento,
+				puntos_maximos=int(data.get('puntos_maximos', 100)),
+				estado=data.get('estado', tareas.EstadoTarea.BORRADOR),
+				archivo_adjunto=archivo_url
+			)
+			
+			serializer = self.get_serializer(tarea)
+			return Response({'status': True, 'data': serializer.data, 'message': 'Tarea creada correctamente'})
+			
+		except Exception as e:
+			return Response({'status': False, 'message': f'Error al crear tarea: {str(e)}'}, status=400)
+
 	@action(detail=True, methods=['post'], url_path='asignar')
 	def asignar_tarea(self, request, pk=None):
 		"""Asignar tarea a estudiantes o grupos"""
@@ -301,6 +351,125 @@ class TareasViewSet(viewsets.ModelViewSet):
 			'asignaciones_creadas': len(asignaciones_creadas)
 		})
 
+	@action(detail=False, methods=['get'], url_path='mis-tareas')
+	def mis_tareas(self, request):
+		"""Get tasks for current user based on their role"""
+		user = request.user
+		usuario_obj = usuario.objects.get(usr=user)
+		
+		if usuario_obj.tipo_usuario == usuario.TiposUsuario.MAESTRO:
+			# Teachers get tasks they created
+			tareas_usuario = tareas.objects.filter(creado_por=usuario_obj).order_by('-fecha_creacion')
+			message = "Tareas que has creado"
+		else:
+			# Students get assigned tasks
+			asignaciones = TareaAsignacion.objects.filter(
+				Q(estudiante=usuario_obj) | Q(grupo=usuario_obj.grupo)
+			)
+			tareas_usuario = tareas.objects.filter(asignaciones__in=asignaciones).distinct().order_by('-fecha_creacion')
+			message = "Tareas asignadas a ti"
+		
+		serializer = self.get_serializer(tareas_usuario, many=True)
+		return Response({
+			'status': True,
+			'message': message,
+			'data': serializer.data
+		})
+
+	@action(detail=True, methods=['get'], url_path='estadisticas')
+	def estadisticas(self, request, pk=None):
+		"""Get statistics for a specific task"""
+		user = request.user
+		usuario_obj = usuario.objects.get(usr=user)
+		
+		if usuario_obj.tipo_usuario != usuario.TiposUsuario.MAESTRO:
+			return Response({'error': 'Solo los maestros pueden ver estadísticas'}, status=403)
+		
+		tarea = self.get_object()
+		
+		# Count assignments by status
+		asignaciones = TareaAsignacion.objects.filter(tarea=tarea)
+		total_asignaciones = asignaciones.count()
+		entregadas = asignaciones.filter(estado=TareaAsignacion.EstadoAsignacion.ENTREGADA).count()
+		calificadas = asignaciones.filter(estado=TareaAsignacion.EstadoAsignacion.CALIFICADA).count()
+		pendientes = total_asignaciones - entregadas
+		
+		# Get average grade
+		entregas_calificadas = TareaEntrega.objects.filter(
+			asignacion__tarea=tarea,
+			revision__isnull=False
+		)
+		
+		if entregas_calificadas.exists():
+			total_calificaciones = sum([e.revision.calificacion for e in entregas_calificadas if e.revision.calificacion])
+			promedio = total_calificaciones / entregas_calificadas.count() if entregas_calificadas.count() > 0 else 0
+		else:
+			promedio = 0
+		
+		return Response({
+			'status': True,
+			'data': {
+				'tarea': tarea.nombre,
+				'total_asignaciones': total_asignaciones,
+				'entregadas': entregadas,
+				'calificadas': calificadas,
+				'pendientes': pendientes,
+				'promedio_calificacion': round(promedio, 2),
+				'puntos_maximos': tarea.puntos_maximos
+			}
+		})
+
+	@action(detail=False, methods=['get'], url_path='mi-progreso')
+	def mi_progreso(self, request):
+		"""Get progress for current student"""
+		user = request.user
+		usuario_obj = usuario.objects.get(usr=user)
+		
+		if usuario_obj.tipo_usuario != usuario.TiposUsuario.ALUMNO:
+			return Response({'error': 'Solo los estudiantes pueden ver su progreso'}, status=403)
+		
+		# Get student's assignments
+		asignaciones = TareaAsignacion.objects.filter(
+			Q(estudiante=usuario_obj) | Q(grupo=usuario_obj.grupo)
+		)
+		
+		total_asignaciones = asignaciones.count()
+		entregadas = asignaciones.filter(estado=TareaAsignacion.EstadoAsignacion.ENTREGADA).count()
+		calificadas = asignaciones.filter(estado=TareaAsignacion.EstadoAsignacion.CALIFICADA).count()
+		pendientes = total_asignaciones - entregadas
+		
+		# Get average grade
+		entregas_estudiante = TareaEntrega.objects.filter(
+			estudiante=usuario_obj,
+			revision__isnull=False
+		)
+		
+		if entregas_estudiante.exists():
+			total_puntos = sum([e.revision.calificacion for e in entregas_estudiante if e.revision.calificacion])
+			total_posibles = sum([e.asignacion.tarea.puntos_maximos for e in entregas_estudiante])
+			promedio = (total_puntos / total_posibles * 100) if total_posibles > 0 else 0
+		else:
+			promedio = 0
+		
+		# Get recent submissions
+		entregas_recientes = TareaEntrega.objects.filter(
+			estudiante=usuario_obj
+		).order_by('-fecha_entrega')[:5]
+		
+		entregas_data = TareaEntregaConRevisionSerializer(entregas_recientes, many=True).data
+		
+		return Response({
+			'status': True,
+			'data': {
+				'total_tareas': total_asignaciones,
+				'entregadas': entregadas,
+				'calificadas': calificadas,
+				'pendientes': pendientes,
+				'promedio_general': round(promedio, 2),
+				'entregas_recientes': entregas_data
+			}
+		})
+
 class TareaAsignacionViewSet(viewsets.ModelViewSet):
 	queryset = TareaAsignacion.objects.all().order_by('-fecha_asignacion')
 	serializer_class = TareaAsignacionSerializer
@@ -319,6 +488,57 @@ class TareaAsignacionViewSet(viewsets.ModelViewSet):
 			return TareaAsignacion.objects.filter(
 				Q(estudiante=usuario_obj) | Q(grupo=usuario_obj.grupo)
 			).order_by('-fecha_asignacion')
+
+	@action(detail=False, methods=['get'], url_path='mi-progreso')
+	def mi_progreso(self, request):
+		"""Get progress for current student"""
+		user = request.user
+		usuario_obj = usuario.objects.get(usr=user)
+		
+		if usuario_obj.tipo_usuario != usuario.TiposUsuario.ALUMNO:
+			return Response({'error': 'Solo los estudiantes pueden ver su progreso'}, status=403)
+		
+		# Get student's assignments
+		asignaciones = TareaAsignacion.objects.filter(
+			Q(estudiante=usuario_obj) | Q(grupo=usuario_obj.grupo)
+		)
+		
+		total_asignaciones = asignaciones.count()
+		entregadas = asignaciones.filter(estado=TareaAsignacion.EstadoAsignacion.ENTREGADA).count()
+		calificadas = asignaciones.filter(estado=TareaAsignacion.EstadoAsignacion.CALIFICADA).count()
+		pendientes = total_asignaciones - entregadas
+		
+		# Get average grade
+		entregas_estudiante = TareaEntrega.objects.filter(
+			estudiante=usuario_obj,
+			revision__isnull=False
+		)
+		
+		if entregas_estudiante.exists():
+			total_puntos = sum([e.revision.calificacion for e in entregas_estudiante if e.revision.calificacion])
+			total_posibles = sum([e.asignacion.tarea.puntos_maximos for e in entregas_estudiante])
+			promedio = (total_puntos / total_posibles * 100) if total_posibles > 0 else 0
+		else:
+			promedio = 0
+		
+		# Get recent submissions
+		entregas_recientes = TareaEntrega.objects.filter(
+			estudiante=usuario_obj
+		).order_by('-fecha_entrega')[:5]
+		
+		entregas_data = TareaEntregaConRevisionSerializer(entregas_recientes, many=True).data
+		
+		return Response({
+			'status': True,
+			'data': {
+				'total_tareas': total_asignaciones,
+				'entregadas': entregadas,
+				'calificadas': calificadas,
+				'pendientes': pendientes,
+				'promedio_general': round(promedio, 2),
+				'entregas_recientes': entregas_data
+			}
+		})
 
 class TareaEntregaViewSet(viewsets.ModelViewSet):
 	queryset = TareaEntrega.objects.all().order_by('-fecha_entrega')
@@ -367,7 +587,11 @@ class TareaEntregaViewSet(viewsets.ModelViewSet):
 			if not archivo.name.endswith(('.jpg', '.png', '.pdf', '.doc', '.docx', '.txt')):
 				return Response({'status': False, 'message': 'Tipo de archivo no permitido.'}, status=400)
 			
-			file_path = f'media/entregas/{archivo.name}'
+			# Add timestamp to filename to avoid conflicts
+			import time
+			timestamp = str(int(time.time()))
+			filename = f"{timestamp}_{archivo.name}"
+			file_path = f'media/entregas/{filename}'
 			saved_file = default_storage.save(file_path, archivo)
 			archivo_url = f"/{saved_file}"
 		
@@ -382,13 +606,31 @@ class TareaEntregaViewSet(viewsets.ModelViewSet):
 					(asignacion.grupo and asignacion.grupo == usuario_obj.grupo)):
 				return Response({'error': 'No tienes permiso para entregar esta tarea'}, status=403)
 			
-			entrega = TareaEntrega.objects.create(
-				asignacion=asignacion,
-				estudiante=usuario_obj,
-				contenido=data['contenido'],
-				archivo_adjunto=archivo_url,
-				estado=data.get('estado', TareaEntrega.EstadoEntrega.BORRADOR)
-			)
+			# Check if submission already exists
+			existing_submission = TareaEntrega.objects.filter(
+				asignacion=asignacion, 
+				estudiante=usuario_obj
+			).first()
+			
+			if existing_submission and existing_submission.estado == TareaEntrega.EstadoEntrega.ENTREGADA:
+				return Response({'error': 'Ya has entregado esta tarea'}, status=400)
+			
+			# If exists but is draft, update it; otherwise create new
+			if existing_submission and existing_submission.estado == TareaEntrega.EstadoEntrega.BORRADOR:
+				existing_submission.contenido = data['contenido']
+				if archivo_url:
+					existing_submission.archivo_adjunto = archivo_url
+				existing_submission.estado = data.get('estado', TareaEntrega.EstadoEntrega.BORRADOR)
+				existing_submission.save()
+				entrega = existing_submission
+			else:
+				entrega = TareaEntrega.objects.create(
+					asignacion=asignacion,
+					estudiante=usuario_obj,
+					contenido=data['contenido'],
+					archivo_adjunto=archivo_url,
+					estado=data.get('estado', TareaEntrega.EstadoEntrega.BORRADOR)
+				)
 			
 			# Update assignment status
 			if entrega.estado == TareaEntrega.EstadoEntrega.ENTREGADA:
@@ -396,10 +638,14 @@ class TareaEntregaViewSet(viewsets.ModelViewSet):
 				asignacion.save()
 			
 			serializer = self.get_serializer(entrega)
-			return Response({'status': True, 'data': serializer.data})
+			return Response({'status': True, 'data': serializer.data, 'message': 'Entrega guardada correctamente'})
 			
+		except TareaAsignacion.DoesNotExist:
+			return Response({'status': False, 'message': 'Asignación no encontrada'}, status=404)
+		except usuario.DoesNotExist:
+			return Response({'status': False, 'message': 'Usuario no encontrado'}, status=404)
 		except Exception as e:
-			return Response({'status': False, 'message': str(e)}, status=400)
+			return Response({'status': False, 'message': f'Error interno: {str(e)}'}, status=500)
 
 	@action(detail=True, methods=['post'], url_path='entregar')
 	def entregar(self, request, pk=None):
