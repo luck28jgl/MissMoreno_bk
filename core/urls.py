@@ -11,6 +11,12 @@ router = routers.DefaultRouter()
 router.register(r'usuarios', UsuariosViewSet)
 router.register(r'bocabulario', bocabularioViewSet)
 router.register(r'abcedario', abcedarioViewSet)
+# Task Management Routes
+router.register(r'tareas', TareasViewSet)
+router.register(r'asignaciones', TareaAsignacionViewSet)
+router.register(r'entregas', TareaEntregaViewSet)
+router.register(r'revisiones', TareaReviewViewSet)
+router.register(r'grupos', GrupoViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),

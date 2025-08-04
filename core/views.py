@@ -9,7 +9,7 @@ import os
 from .serializers import *
 from rest_framework.response import Response
 from rest_framework.authentication import SessionAuthentication
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.views import APIView
@@ -19,6 +19,7 @@ from django.contrib.auth import logout, login
 from rest_framework.authtoken.models import Token
 from core.customPagination import CustomPagination
 from django.core.files.storage import default_storage
+from django.utils import timezone
 
 # Create your views here.
 
@@ -74,7 +75,6 @@ class UsuariosViewSet(viewsets.ModelViewSet):
 			usr=enf,
 			tipo_usuario=1,
 			grado=dat_usr['grado'],
-			tareastes=None,
 			bocabularioasing=None,
 			grupo=None,
 		)
@@ -209,6 +209,295 @@ class bocabularioViewSet(viewsets.ModelViewSet):
 			return Response({'status': True, 'message': 'Bocabulario actualizado correctamente.', 'img_url': enf.texturl})
 		except bocabulario.DoesNotExist:
 			return Response({'status': False, 'message': 'Bocabulario no encontrado.'}, status=404)
+
+# ========== TASK MANAGEMENT VIEWSETS ==========
+
+class TareasViewSet(viewsets.ModelViewSet):
+	queryset = tareas.objects.all().order_by('-fecha_creacion')
+	serializer_class = TareasSerializer
+	permission_classes = [IsAuthenticated]
+	pagination_class = CustomPagination
+
+	def get_queryset(self):
+		user = self.request.user
+		usuario_obj = usuario.objects.get(usr=user)
+		
+		# Teachers can see all tasks, students only see assigned tasks
+		if usuario_obj.tipo_usuario == usuario.TiposUsuario.MAESTRO:
+			return tareas.objects.all().order_by('-fecha_creacion')
+		else:
+			# Students see tasks assigned to them
+			asignaciones = TareaAsignacion.objects.filter(
+				Q(estudiante=usuario_obj) | Q(grupo=usuario_obj.grupo)
+			)
+			return tareas.objects.filter(asignaciones__in=asignaciones).distinct().order_by('-fecha_creacion')
+
+	def perform_create(self, serializer):
+		user = self.request.user
+		usuario_obj = usuario.objects.get(usr=user)
+		
+		# Only teachers can create tasks
+		if usuario_obj.tipo_usuario != usuario.TiposUsuario.MAESTRO:
+			raise PermissionError("Solo los maestros pueden crear tareas")
+		
+		serializer.save(creado_por=usuario_obj)
+
+	@action(detail=True, methods=['post'], url_path='asignar')
+	def asignar_tarea(self, request, pk=None):
+		"""Asignar tarea a estudiantes o grupos"""
+		user = self.request.user
+		usuario_obj = usuario.objects.get(usr=user)
+		
+		# Only teachers can assign tasks
+		if usuario_obj.tipo_usuario != usuario.TiposUsuario.MAESTRO:
+			return Response({'error': 'Solo los maestros pueden asignar tareas'}, status=status.HTTP_403_FORBIDDEN)
+		
+		tarea = self.get_object()
+		data = request.data
+		
+		estudiante_ids = data.get('estudiante_ids', [])
+		grupo_ids = data.get('grupo_ids', [])
+		fecha_vencimiento_personalizada = data.get('fecha_vencimiento_personalizada')
+		
+		asignaciones_creadas = []
+		
+		# Asignar a estudiantes individuales
+		for estudiante_id in estudiante_ids:
+			try:
+				estudiante = usuario.objects.get(id=estudiante_id, tipo_usuario=usuario.TiposUsuario.ALUMNO)
+				asignacion, created = TareaAsignacion.objects.get_or_create(
+					tarea=tarea,
+					estudiante=estudiante,
+					defaults={
+						'asignado_por': usuario_obj,
+						'fecha_vencimiento_personalizada': fecha_vencimiento_personalizada
+					}
+				)
+				if created:
+					asignaciones_creadas.append(asignacion)
+			except usuario.DoesNotExist:
+				continue
+		
+		# Asignar a grupos
+		for grupo_id in grupo_ids:
+			try:
+				grupo = Grupo.objects.get(id=grupo_id)
+				asignacion, created = TareaAsignacion.objects.get_or_create(
+					tarea=tarea,
+					grupo=grupo,
+					defaults={
+						'asignado_por': usuario_obj,
+						'fecha_vencimiento_personalizada': fecha_vencimiento_personalizada
+					}
+				)
+				if created:
+					asignaciones_creadas.append(asignacion)
+			except Grupo.DoesNotExist:
+				continue
+		
+		return Response({
+			'status': True,
+			'message': f'Tarea asignada a {len(asignaciones_creadas)} destinatarios',
+			'asignaciones_creadas': len(asignaciones_creadas)
+		})
+
+class TareaAsignacionViewSet(viewsets.ModelViewSet):
+	queryset = TareaAsignacion.objects.all().order_by('-fecha_asignacion')
+	serializer_class = TareaAsignacionSerializer
+	permission_classes = [IsAuthenticated]
+	pagination_class = CustomPagination
+
+	def get_queryset(self):
+		user = self.request.user
+		usuario_obj = usuario.objects.get(usr=user)
+		
+		if usuario_obj.tipo_usuario == usuario.TiposUsuario.MAESTRO:
+			# Teachers see all assignments they made
+			return TareaAsignacion.objects.filter(asignado_por=usuario_obj).order_by('-fecha_asignacion')
+		else:
+			# Students see their own assignments
+			return TareaAsignacion.objects.filter(
+				Q(estudiante=usuario_obj) | Q(grupo=usuario_obj.grupo)
+			).order_by('-fecha_asignacion')
+
+class TareaEntregaViewSet(viewsets.ModelViewSet):
+	queryset = TareaEntrega.objects.all().order_by('-fecha_entrega')
+	serializer_class = TareaEntregaSerializer
+	permission_classes = [IsAuthenticated]
+	pagination_class = CustomPagination
+
+	def get_queryset(self):
+		user = self.request.user
+		usuario_obj = usuario.objects.get(usr=user)
+		
+		if usuario_obj.tipo_usuario == usuario.TiposUsuario.MAESTRO:
+			# Teachers see all submissions for tasks they created or assigned
+			return TareaEntrega.objects.filter(
+				Q(asignacion__tarea__creado_por=usuario_obj) | 
+				Q(asignacion__asignado_por=usuario_obj)
+			).order_by('-fecha_entrega')
+		else:
+			# Students see only their own submissions
+			return TareaEntrega.objects.filter(estudiante=usuario_obj).order_by('-fecha_entrega')
+
+	def perform_create(self, serializer):
+		user = self.request.user
+		usuario_obj = usuario.objects.get(usr=user)
+		
+		# Only students can create submissions
+		if usuario_obj.tipo_usuario != usuario.TiposUsuario.ALUMNO:
+			raise PermissionError("Solo los estudiantes pueden entregar tareas")
+		
+		asignacion_id = self.request.data.get('asignacion')
+		asignacion = TareaAsignacion.objects.get(id=asignacion_id)
+		
+		# Verify the student is assigned to this task
+		if not (asignacion.estudiante == usuario_obj or 
+				(asignacion.grupo and asignacion.grupo == usuario_obj.grupo)):
+			raise PermissionError("No tienes permiso para entregar esta tarea")
+		
+		serializer.save(estudiante=usuario_obj)
+
+	def create(self, request):
+		data = request.data
+		archivo = request.FILES.get('archivo')
+		
+		archivo_url = None
+		if archivo:
+			if not archivo.name.endswith(('.jpg', '.png', '.pdf', '.doc', '.docx', '.txt')):
+				return Response({'status': False, 'message': 'Tipo de archivo no permitido.'}, status=400)
+			
+			file_path = f'media/entregas/{archivo.name}'
+			saved_file = default_storage.save(file_path, archivo)
+			archivo_url = f"/{saved_file}"
+		
+		# Create the submission
+		try:
+			user = request.user
+			usuario_obj = usuario.objects.get(usr=user)
+			asignacion = TareaAsignacion.objects.get(id=data['asignacion'])
+			
+			# Verify permissions
+			if not (asignacion.estudiante == usuario_obj or 
+					(asignacion.grupo and asignacion.grupo == usuario_obj.grupo)):
+				return Response({'error': 'No tienes permiso para entregar esta tarea'}, status=403)
+			
+			entrega = TareaEntrega.objects.create(
+				asignacion=asignacion,
+				estudiante=usuario_obj,
+				contenido=data['contenido'],
+				archivo_adjunto=archivo_url,
+				estado=data.get('estado', TareaEntrega.EstadoEntrega.BORRADOR)
+			)
+			
+			# Update assignment status
+			if entrega.estado == TareaEntrega.EstadoEntrega.ENTREGADA:
+				asignacion.estado = TareaAsignacion.EstadoAsignacion.ENTREGADA
+				asignacion.save()
+			
+			serializer = self.get_serializer(entrega)
+			return Response({'status': True, 'data': serializer.data})
+			
+		except Exception as e:
+			return Response({'status': False, 'message': str(e)}, status=400)
+
+	@action(detail=True, methods=['post'], url_path='entregar')
+	def entregar(self, request, pk=None):
+		"""Submit the task officially"""
+		entrega = self.get_object()
+		user = request.user
+		usuario_obj = usuario.objects.get(usr=user)
+		
+		if entrega.estudiante != usuario_obj:
+			return Response({'error': 'No tienes permiso para entregar esta tarea'}, status=403)
+		
+		entrega.estado = TareaEntrega.EstadoEntrega.ENTREGADA
+		entrega.save()
+		
+		# Update assignment status
+		entrega.asignacion.estado = TareaAsignacion.EstadoAsignacion.ENTREGADA
+		entrega.asignacion.save()
+		
+		return Response({'status': True, 'message': 'Tarea entregada correctamente'})
+
+class TareaReviewViewSet(viewsets.ModelViewSet):
+	queryset = TareaReview.objects.all().order_by('-fecha_revision')
+	serializer_class = TareaReviewSerializer
+	permission_classes = [IsAuthenticated]
+	pagination_class = CustomPagination
+
+	def get_queryset(self):
+		user = self.request.user
+		usuario_obj = usuario.objects.get(usr=user)
+		
+		if usuario_obj.tipo_usuario == usuario.TiposUsuario.MAESTRO:
+			# Teachers see reviews they made
+			return TareaReview.objects.filter(revisor=usuario_obj).order_by('-fecha_revision')
+		else:
+			# Students see reviews of their submissions
+			return TareaReview.objects.filter(entrega__estudiante=usuario_obj).order_by('-fecha_revision')
+
+	def perform_create(self, serializer):
+		user = self.request.user
+		usuario_obj = usuario.objects.get(usr=user)
+		
+		# Only teachers can create reviews
+		if usuario_obj.tipo_usuario != usuario.TiposUsuario.MAESTRO:
+			raise PermissionError("Solo los maestros pueden revisar tareas")
+		
+		entrega_id = self.request.data.get('entrega')
+		entrega = TareaEntrega.objects.get(id=entrega_id)
+		
+		# Verify the teacher can review this submission
+		if not (entrega.asignacion.tarea.creado_por == usuario_obj or 
+				entrega.asignacion.asignado_por == usuario_obj):
+			raise PermissionError("No tienes permiso para revisar esta entrega")
+		
+		serializer.save(revisor=usuario_obj)
+		
+		# Update submission and assignment status
+		entrega.estado = TareaEntrega.EstadoEntrega.CALIFICADA
+		entrega.save()
+		
+		entrega.asignacion.estado = TareaAsignacion.EstadoAsignacion.CALIFICADA
+		entrega.asignacion.save()
+
+	@action(detail=False, methods=['get'], url_path='pendientes')
+	def pendientes(self, request):
+		"""Get pending submissions for review"""
+		user = request.user
+		usuario_obj = usuario.objects.get(usr=user)
+		
+		if usuario_obj.tipo_usuario != usuario.TiposUsuario.MAESTRO:
+			return Response({'error': 'Solo los maestros pueden ver revisiones pendientes'}, status=403)
+		
+		# Get submissions that need review
+		entregas_pendientes = TareaEntrega.objects.filter(
+			estado=TareaEntrega.EstadoEntrega.ENTREGADA,
+			asignacion__tarea__creado_por=usuario_obj
+		).exclude(revision__isnull=False)
+		
+		serializer = TareaEntregaConRevisionSerializer(entregas_pendientes, many=True)
+		return Response(serializer.data)
+
+class GrupoViewSet(viewsets.ModelViewSet):
+	queryset = Grupo.objects.all().order_by('nombre')
+	serializer_class = GrupoSerializer
+	permission_classes = [IsAuthenticated]
+	pagination_class = CustomPagination
+
+	def get_queryset(self):
+		user = self.request.user
+		usuario_obj = usuario.objects.get(usr=user)
+		
+		if usuario_obj.tipo_usuario == usuario.TiposUsuario.MAESTRO:
+			# Teachers see all groups
+			return Grupo.objects.all().order_by('nombre')
+		else:
+			# Students see only their group
+			if usuario_obj.grupo:
+				return Grupo.objects.filter(id=usuario_obj.grupo.id)
+			return Grupo.objects.none()
 
 class CustomTokenCreateView(APIView):
 	permission_classes = [AllowAny]
