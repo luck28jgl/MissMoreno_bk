@@ -27,3 +27,61 @@ class usuariosSerializer(serializers.ModelSerializer):
     class Meta:
         model = usuario
         fields = '__all__'
+
+class TareasSerializer(serializers.ModelSerializer):
+    creado_por_nombre = serializers.CharField(source='creado_por.usr.get_full_name', read_only=True)
+    creado_por_email = serializers.EmailField(source='creado_por.usr.email', read_only=True)
+    
+    class Meta:
+        model = tareas
+        fields = '__all__'
+        read_only_fields = ('fecha_creacion',)
+
+class TareaAsignacionSerializer(serializers.ModelSerializer):
+    tarea_nombre = serializers.CharField(source='tarea.nombre', read_only=True)
+    estudiante_nombre = serializers.CharField(source='estudiante.usr.get_full_name', read_only=True)
+    grupo_nombre = serializers.CharField(source='grupo.nombre', read_only=True)
+    asignado_por_nombre = serializers.CharField(source='asignado_por.usr.get_full_name', read_only=True)
+    
+    class Meta:
+        model = TareaAsignacion
+        fields = '__all__'
+        read_only_fields = ('fecha_asignacion',)
+
+class TareaEntregaSerializer(serializers.ModelSerializer):
+    tarea_nombre = serializers.CharField(source='asignacion.tarea.nombre', read_only=True)
+    estudiante_nombre = serializers.CharField(source='estudiante.usr.get_full_name', read_only=True)
+    puntos_maximos = serializers.IntegerField(source='asignacion.tarea.puntos_maximos', read_only=True)
+    
+    class Meta:
+        model = TareaEntrega
+        fields = '__all__'
+        read_only_fields = ('fecha_entrega', 'fecha_modificacion')
+
+class TareaReviewSerializer(serializers.ModelSerializer):
+    revisor_nombre = serializers.CharField(source='revisor.usr.get_full_name', read_only=True)
+    estudiante_nombre = serializers.CharField(source='entrega.estudiante.usr.get_full_name', read_only=True)
+    tarea_nombre = serializers.CharField(source='entrega.asignacion.tarea.nombre', read_only=True)
+    puntos_maximos = serializers.IntegerField(source='entrega.asignacion.tarea.puntos_maximos', read_only=True)
+    
+    class Meta:
+        model = TareaReview
+        fields = '__all__'
+        read_only_fields = ('fecha_revision', 'fecha_modificacion')
+
+class TareaEntregaConRevisionSerializer(serializers.ModelSerializer):
+    """Serializer para entregas que incluye información de revisión"""
+    revision = TareaReviewSerializer(read_only=True)
+    tarea_nombre = serializers.CharField(source='asignacion.tarea.nombre', read_only=True)
+    estudiante_nombre = serializers.CharField(source='estudiante.usr.get_full_name', read_only=True)
+    puntos_maximos = serializers.IntegerField(source='asignacion.tarea.puntos_maximos', read_only=True)
+    
+    class Meta:
+        model = TareaEntrega
+        fields = '__all__'
+        read_only_fields = ('fecha_entrega', 'fecha_modificacion')
+
+class GrupoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Grupo
+        fields = '__all__'
